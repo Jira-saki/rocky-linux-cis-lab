@@ -1,0 +1,62 @@
+---
+- hosts: rocky_nodes
+  become: true
+  tasks:
+    - name: Update all system packages
+      dnf:
+        name: '*'
+        state: latest
+      register: dnf_update
+
+    - name: Check if reboot is required
+      debug:
+        msg: "Packages updated. Please check if reboot is needed."
+      when: dnf_update.changed
+      
+# CIS Benchmark tasks ----------
+    - name: Hardening SSH configuration
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^{{ item.key }}'
+        line: '{{ item.line }}'
+      loop:
+        - { key: 'PermitRootLogin', line: 'PermitRootLogin prohibit-password' }
+        - { key: 'PasswordAuthentication', line: 'PasswordAuthentication no' }
+      notify: Restart sshd
+
+    - name: Disable unnecessary services
+      service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - avahi-daemon
+        - cups
+        - bluetooth
+      ignore_errors: true
+
+    - name: CIS Benchmark - Kernel hardening via sysctl
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { key: 'net.ipv4.ip_forward', value: '0' }
+        - { key: 'fs.suid_dumpable', value: '0' }
+
+    - name: CIS Benchmark - Configure password aging
+      lineinfile:
+        path: /etc/login.defs
+        regexp: '^{{ item.key }}\s+'
+        line: '{{ item.key }} {{ item.value }}'
+      loop:
+        - { key: 'PASS_MAX_DAYS', value: '90' }
+        - { key: 'PASS_MIN_DAYS', value: '7' }
+        - { key: 'PASS_WARN_AGE', value: '7' }
+  
+  handlers:
+    - name: Restart sshd
+      service:
+        name: sshd
+        state: restarted
